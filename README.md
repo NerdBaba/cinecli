@@ -39,11 +39,11 @@ pipx install ".[download]"
 cine -h
 ```
 
-Install directly from GitHub (after publishing the repo):
+Install directly from GitHub :
 ```bash
 pipx install git+https://github.com/NerdBaba/cinecli.git
 pipx install "git+https://github.com/NerdBaba/cinecli.git#egg=cinecli[download]"
-
+```
 #### Using uv (fast installer)
 ```bash
 # Install as a standalone tool (adds `cine` to your PATH)
@@ -74,7 +74,7 @@ pip install ".[download]"
 
 ### Building a Single-Command CLI
 After installation, you'll get two commands:
-- `cine` (recommended for brevity)
+- `cine` 
 - `cinecli`
 
 Both provide the same functionality:
@@ -146,7 +146,6 @@ cine vidsrc movie 27205
 cine torrentio tv 1399 -s 1 -e 1
 ```
 
-The dashboard now includes a built-in "Search" option alongside History, Popular Movies, and Popular TV.
 
 ### Interactive Features
 After selecting media, you'll see an fzf menu with options:
