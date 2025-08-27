@@ -1,6 +1,7 @@
 # CineCLI - Terminal Media Browser
 
 CineCLI is a terminal-based media browser that integrates with TMDB, VidSrc, and Torrentio for streaming and downloading media content.
+<img width="1880" height="989" alt="image" src="https://github.com/user-attachments/assets/50909ee9-1f9a-4833-afd7-5357c94c1381" />
 
 ## Features
 - 🔍 Search TMDB for movies/TV shows
