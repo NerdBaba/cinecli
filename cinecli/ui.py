@@ -9,6 +9,17 @@ from .models import MediaItem, MediaType
 import base64
 import sys
 
+# Ensure UTF-8 output on Windows for proper emoji rendering
+if sys.platform == "win32":
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        # Best-effort; ignore if the environment doesn't support reconfigure
+        pass
+
 
 def ensure_binary(name: str) -> bool:
     return shutil.which(name) is not None
