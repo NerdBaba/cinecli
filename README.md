@@ -19,6 +19,13 @@ CineCLI is a terminal-based media browser that integrates with TMDB, VidSrc, and
   ```bash
   # Debian/Ubuntu
   sudo apt-get install fzf mpv chafa
+
+  #Windows
+  #Chocolatey
+  choco install -y mpv fzf chafa
+
+  #Scoop
+  scoop bucket add extras && scoop install mpv fzf chafa
   
   # webtorrent-cli
   npm i -g webtorrent-cli
