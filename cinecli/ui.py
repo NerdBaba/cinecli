@@ -106,6 +106,7 @@ def run_fzf(items: Iterable[MediaItem], preview: bool = True) -> Optional[MediaI
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
     )
     assert proc.stdin and proc.stdout
     proc.stdin.write("\n".join(lines))
@@ -149,7 +150,7 @@ def pick_from_strings(options: list[str], header: str = "Select") -> Optional[st
         "fzf",
         "--prompt=" + header + "> ",
     ]
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8")
     assert proc.stdin and proc.stdout
     proc.stdin.write("\n".join(options))
     proc.stdin.close()
@@ -185,7 +186,7 @@ def pick_with_preview(rows: list[dict], header: str = "Select") -> Optional[dict
         f"{sys.executable} -m cinecli.preview {{2}}",
         "--preview-window=right:70%:wrap",
     ]
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8")
     assert proc.stdin and proc.stdout
     proc.stdin.write("\n".join(lines))
     proc.stdin.close()
