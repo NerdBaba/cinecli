@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 import os
 
 import requests
+from urllib.parse import quote
 from pydantic import BaseModel, Field
 
 
@@ -22,6 +23,23 @@ DEFAULT_HEADERS = {
     "Origin": "https://torrentio.strem.fun",
     "Connection": "keep-alive",
 }
+
+
+def _maybe_proxy(url: str) -> str:
+    """If CINE_PROXY_PREFIX is set and URL targets Torrentio, wrap it.
+
+    Expects prefix like: https://host/path?destination=
+    """
+    try:
+        pref = os.environ.get("CINE_PROXY_PREFIX")
+        if not pref:
+            return url
+        host = url.split("//", 1)[-1].split("/", 1)[0]
+        if host.endswith("torrentio.strem.fun") or host == "torrentio.strem.fun":
+            return f"{pref}{quote(url, safe=':/?&=%')}"
+    except Exception:
+        pass
+    return url
 
 
 class TorrentioStream(BaseModel):
@@ -52,12 +70,12 @@ class TorrentioStream(BaseModel):
 def _torrentio_url(media_type: str, imdb_id: str, season: Optional[int] = None, episode: Optional[int] = None) -> str:
     mt = media_type.lower().strip()
     if mt == "movie":
-        return f"{TORRENTIO_BASE}/stream/movie/{imdb_id}.json"
+        return _maybe_proxy(f"{TORRENTIO_BASE}/stream/movie/{imdb_id}.json")
     if mt == "tv":
         if season is None or episode is None:
             raise ValueError("season and episode are required for tv")
         # Torrentio expects series path with imdb:season:episode
-        return f"{TORRENTIO_BASE}/stream/series/{imdb_id}:{season}:{episode}.json"
+        return _maybe_proxy(f"{TORRENTIO_BASE}/stream/series/{imdb_id}:{season}:{episode}.json")
     raise ValueError("media_type must be 'movie' or 'tv'")
 
 

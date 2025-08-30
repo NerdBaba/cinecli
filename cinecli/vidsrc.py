@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Iterable, List, Optional, Tuple
 
 import requests
+from urllib.parse import quote
 
 DEFAULT_TIMEOUT = 8
 
@@ -19,6 +20,24 @@ VALID_VIDSRC_DOMAINS = [
     # Ordered by likelihood of being up
     "vidsrc.xyz",
 ]
+
+
+def _maybe_proxy(url: str) -> str:
+    """If CINE_PROXY_PREFIX is set and URL targets a VidSrc domain, wrap it.
+
+    Expects prefix like: https://host/path?destination=
+    """
+    try:
+        pref = os.environ.get("CINE_PROXY_PREFIX")
+        if not pref:
+            return url
+        # Only proxy VidSrc domains
+        host = re.sub(r"^https?://", "", url).split("/", 1)[0]
+        if any(host.endswith(d) or host == d for d in VALID_VIDSRC_DOMAINS):
+            return f"{pref}{quote(url, safe=':/?&=%')}"
+    except Exception:
+        pass
+    return url
 
 
 @dataclass
@@ -227,7 +246,7 @@ def scrape_vidsrc(
             break
         tried += 1
         try:
-            r = sess.get(embed_url, timeout=timeout)
+            r = sess.get(_maybe_proxy(embed_url), timeout=timeout)
         except Exception:
             continue
         if r.status_code != 200 or not r.text:
@@ -272,7 +291,7 @@ def scrape_vidsrc(
             except Exception:
                 pass
             try:
-                resp = sess.get(url, headers=headers, timeout=timeout)
+                resp = sess.get(_maybe_proxy(url), headers=headers, timeout=timeout)
             except Exception:
                 continue
             pages += 1

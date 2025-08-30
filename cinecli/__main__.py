@@ -719,6 +719,8 @@ def cmd_history(limit: int = 30) -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
     p = argparse.ArgumentParser(prog="cinecli", description="TMDB terminal browser with fzf/chafa")
+    # Global options
+    p.add_argument("-p", "--proxy", help="HTTPS proxy prefix to wrap external requests, e.g. https://host/path?destination=")
     sub = p.add_subparsers(dest="cmd")
 
     p_setup = sub.add_parser("setup", help="Interactive configuration")
@@ -754,6 +756,10 @@ def main(argv: list[str] | None = None) -> int:
 
     args = p.parse_args(argv)
 
+    # Apply proxy for downstream modules via env var
+    if getattr(args, "proxy", None):
+        os.environ["CINE_PROXY_PREFIX"] = args.proxy
+
     if args.cmd == "setup":
         return cmd_setup()
     if args.cmd == "search":
@@ -784,11 +790,7 @@ def main(argv: list[str] | None = None) -> int:
             getattr(args, "timeout", 12),
         )
 
-    # Default to search if extra args provided (legacy behavior)
-    if argv:
-        return cmd_search(" ".join(argv))
-
-    # No args: open dashboard by default
+    # No subcommand: open dashboard by default
     return cmd_dashboard(no_preview=False)
 
 
