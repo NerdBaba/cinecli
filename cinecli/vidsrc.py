@@ -18,7 +18,7 @@ USER_AGENT = (
 
 VALID_VIDSRC_DOMAINS = [
     # Ordered by likelihood of being up
-    "vidsrc.xyz",
+    "vidsrc.net",
 ]
 
 
