@@ -21,6 +21,8 @@ class Settings(BaseModel):
     image_preview: bool = True
     history_path: str = str(DATA_DIR / "history.jsonl")
     webtorrent_tmp_dir: str = str(CACHE_DIR / "webtorrent")
+    # Optional TorBox API key; if empty, TorBox features are hidden
+    torbox_api_key: str = ""
 
 
 class ConfigManager:
@@ -81,6 +83,7 @@ class ConfigManager:
             player=player,
             image_preview=image_preview,
             webtorrent_tmp_dir=webtorrent_tmp_dir,
+            torbox_api_key=input("TorBox API key (optional, press Enter to skip): ").strip(),
         )
         self.save(settings)
         print(f"Saved config to {self.path}")

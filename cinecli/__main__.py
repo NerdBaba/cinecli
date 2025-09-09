@@ -22,6 +22,10 @@ from .torrentio import (
     download_webtorrent as torrentio_download,
     TorrentioStream,
 )
+from .torbox import (
+    get_streams as torbox_get_streams,
+    TorboxStream,
+)
 
 
 def cmd_setup() -> int:
@@ -161,14 +165,19 @@ def _record_download(hist: History, *, media_id: int, media_type: str, title: st
     )
 
 
-def _pick_action() -> Optional[str]:
+def _pick_action(*, torbox_enabled: bool) -> Optional[str]:
     options = [
         "Play with VidSrc",
         "Play with Torrentio",
         "Download with VidSrc",
         "Download with Torrentio",
-        "Skip",
     ]
+    if torbox_enabled:
+        options = [
+            "Play with TorBox",
+            "Download with TorBox",
+        ] + options
+    options.append("Skip")
     sel = pick_from_strings(options, header="Action")
     if not sel:
         return None
@@ -177,6 +186,8 @@ def _pick_action() -> Optional[str]:
         "Play with Torrentio": "play_torrentio",
         "Download with VidSrc": "download_vidsrc",
         "Download with Torrentio": "download_torrentio",
+        "Play with TorBox": "play_torbox",
+        "Download with TorBox": "download_torbox",
         "Skip": "skip",
     }
     return mapping.get(sel)
@@ -296,6 +307,123 @@ def _play_with_torrentio(cfg: ConfigManager, hist: History, tmdb: TMDBClient, *,
     return 0
 
 
+def _play_with_torbox(cfg: ConfigManager, hist: History, tmdb: TMDBClient, *, tmdb_id: int, media_type_val: str, episode_payload: Optional[dict], title: str, poster_url: Optional[str], backdrop_url: Optional[str]) -> int:
+    api_key = getattr(cfg, "torbox_api_key", "") or ""
+    if not api_key:
+        print("TorBox API key not configured. Run 'cinecli setup' to add it.")
+        return 0
+    imdb_id = None
+    try:
+        if media_type_val == MediaType.movie.value:
+            imdb_id = tmdb.movie_external_ids(tmdb_id).get("imdb_id")
+        else:
+            imdb_id = tmdb.tv_external_ids(tmdb_id).get("imdb_id")
+    except Exception as e:
+        print(f"Failed to fetch external IDs: {e}")
+        return 0
+    if not imdb_id:
+        print("No IMDb ID found for item.")
+        return 0
+    try:
+        if media_type_val == MediaType.movie.value:
+            streams = torbox_get_streams(api_key, "movie", imdb_id, timeout=12)
+        else:
+            if not episode_payload:
+                print("No episode selected; cannot resolve TV TorBox streams.")
+                return 0
+            streams = torbox_get_streams(api_key, "tv", imdb_id, season=episode_payload.get("season"), episode=episode_payload.get("episode"), timeout=12)
+    except Exception as e:
+        print(f"Failed to fetch TorBox streams: {e}")
+        return 0
+    if not streams:
+        print("No TorBox streams found.")
+        return 0
+    labels = [s.display() for s in streams]
+    pick = pick_from_strings(labels, header="TorBox Stream")
+    if not pick:
+        print("Nothing selected.")
+        return 0
+    try:
+        idx = labels.index(pick)
+    except ValueError:
+        idx = 0
+    chosen: TorboxStream = streams[idx]
+    player = _choose_player(cfg)
+    if not player:
+        print("No supported player (mpv/vlc) found on PATH.")
+        print(f"URL: {chosen.url}")
+        return 0
+    print(f"Launching {player} -> {chosen.url}")
+    try:
+        subprocess.Popen([player, chosen.url])
+        _record_play(hist, media_id=tmdb_id, media_type=media_type_val, title=title, episode_payload=episode_payload, poster_url=poster_url, backdrop_url=backdrop_url, method="torbox")
+    except Exception as e:
+        print(f"Failed to launch {player}: {e}")
+    return 0
+
+
+def _download_with_torbox(cfg: ConfigManager, hist: History, tmdb: TMDBClient, *, tmdb_id: int, media_type_val: str, episode_payload: Optional[dict], title: str, poster_url: Optional[str], backdrop_url: Optional[str]) -> int:
+    api_key = getattr(cfg, "torbox_api_key", "") or ""
+    if not api_key:
+        print("TorBox API key not configured. Run 'cinecli setup' to add it.")
+        return 0
+    imdb_id = None
+    try:
+        if media_type_val == MediaType.movie.value:
+            imdb_id = tmdb.movie_external_ids(tmdb_id).get("imdb_id")
+        else:
+            imdb_id = tmdb.tv_external_ids(tmdb_id).get("imdb_id")
+    except Exception as e:
+        print(f"Failed to fetch external IDs: {e}")
+        return 0
+    if not imdb_id:
+        print("No IMDb ID found for item.")
+        return 0
+    try:
+        if media_type_val == MediaType.movie.value:
+            streams = torbox_get_streams(api_key, "movie", imdb_id, timeout=12)
+        else:
+            if not episode_payload:
+                print("No episode selected; cannot resolve TV TorBox streams.")
+                return 0
+            streams = torbox_get_streams(api_key, "tv", imdb_id, season=episode_payload.get("season"), episode=episode_payload.get("episode"), timeout=12)
+    except Exception as e:
+        print(f"Failed to fetch TorBox streams: {e}")
+        return 0
+    if not streams:
+        print("No TorBox streams found.")
+        return 0
+    labels = [s.display() for s in streams]
+    pick = pick_from_strings(labels, header="TorBox Stream")
+    if not pick:
+        print("Nothing selected.")
+        return 0
+    try:
+        idx = labels.index(pick)
+    except ValueError:
+        idx = 0
+    chosen: TorboxStream = streams[idx]
+    # Ensure yt-dlp exists
+    ytdlp = shutil.which("yt-dlp")
+    if not ytdlp:
+        print("yt-dlp not found on PATH. Install it to enable TorBox downloads.")
+        print(f"URL: {chosen.url}")
+        return 0
+    out_dir = _prompt_directory()
+    if not out_dir:
+        print("No directory provided.")
+        return 0
+    output_tpl = os.path.join(out_dir, "%(title)s.%(ext)s")
+    cmd = [ytdlp, chosen.url, "-o", output_tpl]
+    print(f"Downloading with yt-dlp -> {output_tpl}")
+    try:
+        subprocess.Popen(cmd)
+        _record_download(hist, media_id=tmdb_id, media_type=media_type_val, title=title, episode_payload=episode_payload, poster_url=poster_url, backdrop_url=backdrop_url, method="torbox", out_dir=out_dir)
+    except Exception as e:
+        print(f"Failed to launch yt-dlp: {e}")
+    return 0
+
+
 def cmd_dashboard(no_preview: bool = False) -> int:
     cfg = ConfigManager().load()
     tmdb = TMDBClient(cfg.tmdb_api_key)
@@ -349,7 +477,7 @@ def cmd_dashboard(no_preview: bool = False) -> int:
         if media_type_val == MediaType.tv.value and sel.get("season") and sel.get("episode"):
             ep_payload = {"season": int(sel.get("season")), "episode": int(sel.get("episode"))}
         method = sel.get("last_method")
-        action = _pick_action()
+        action = _pick_action(torbox_enabled=bool(getattr(cfg, "torbox_api_key", "")))
         if not action or action == "skip":
             print("Skipped.")
             return 0
@@ -357,10 +485,14 @@ def cmd_dashboard(no_preview: bool = False) -> int:
             return _play_with_vidsrc(cfg, hist, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
         if action == "play_torrentio":
             return _play_with_torrentio(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
+        if action == "play_torbox":
+            return _play_with_torbox(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
         if action == "download_vidsrc":
             return _download_with_vidsrc(cfg, hist, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
         if action == "download_torrentio":
             return _download_with_torrentio(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
+        if action == "download_torbox":
+            return _download_with_torbox(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
         return 0
 
     elif choice == "Popular Movies":
@@ -377,7 +509,7 @@ def cmd_dashboard(no_preview: bool = False) -> int:
             if it.get("media_type") == MediaType.movie.value and int(it.get("id")) == int(selected.id) and it.get("last_method"):
                 last_method = it.get("last_method")
                 break
-        action = _pick_action()
+        action = _pick_action(torbox_enabled=bool(getattr(cfg, "torbox_api_key", "")))
         if not action or action == "skip":
             print("Skipped.")
             return 0
@@ -385,10 +517,14 @@ def cmd_dashboard(no_preview: bool = False) -> int:
             return _play_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
         if action == "play_torrentio":
             return _play_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "play_torbox":
+            return _play_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
         if action == "download_vidsrc":
             return _download_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
         if action == "download_torrentio":
             return _download_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "download_torbox":
+            return _download_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
         return 0
 
     elif choice == "Search":
@@ -447,7 +583,7 @@ def cmd_dashboard(no_preview: bool = False) -> int:
             if it.get("media_type") == MediaType.tv.value and int(it.get("id")) == int(selected.id) and it.get("last_method"):
                 last_method = it.get("last_method")
                 break
-        action = _pick_action()
+        action = _pick_action(torbox_enabled=bool(getattr(cfg, "torbox_api_key", "")))
         if not action or action == "skip":
             print("Skipped.")
             return 0
@@ -455,10 +591,14 @@ def cmd_dashboard(no_preview: bool = False) -> int:
             return _play_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
         if action == "play_torrentio":
             return _play_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "play_torbox":
+            return _play_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
         if action == "download_vidsrc":
             return _download_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
         if action == "download_torrentio":
             return _download_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "download_torbox":
+            return _download_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
         return 0
 
 
@@ -689,8 +829,8 @@ def cmd_search(query: Optional[str], no_preview: bool = False) -> int:
     print(json.dumps(output, ensure_ascii=False))
     print("Saved to history.")
 
-    # Action selection: play or download via VidSrc/Torrentio
-    action = _pick_action()
+    # Action selection: play or download via VidSrc/Torrentio/TorBox
+    action = _pick_action(torbox_enabled=bool(getattr(cfg, "torbox_api_key", "")))
     if not action or action == "skip":
         print("Skipped.")
         return 0
@@ -698,10 +838,14 @@ def cmd_search(query: Optional[str], no_preview: bool = False) -> int:
         return _play_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
     if action == "play_torrentio":
         return _play_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+    if action == "play_torbox":
+        return _play_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
     if action == "download_vidsrc":
         return _download_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
     if action == "download_torrentio":
         return _download_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+    if action == "download_torbox":
+        return _download_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
     return 0
 
 
