@@ -43,6 +43,7 @@ class TorboxStream(BaseModel):
     description: Optional[str] = None
     url: str
     behaviorHints: Dict[str, Any] = Field(default_factory=dict)
+    size_bytes: Optional[int] = None
 
     def display(self) -> str:
         parts: List[str] = []
@@ -52,7 +53,10 @@ class TorboxStream(BaseModel):
             parts.append(self.title.replace("\n", " "))
         if not parts:
             parts.append(self.url.split("/", 3)[-1][:40])
-        return " | ".join(parts)
+        label = " | ".join(parts)
+        if isinstance(self.size_bytes, int) and self.size_bytes > 0:
+            label += f"  ({_fmt_size(self.size_bytes)})"
+        return label
 
 
 def _torbox_url(api_key: str, media_type: str, imdb_id: str, season: Optional[int] = None, episode: Optional[int] = None) -> str:
@@ -76,6 +80,15 @@ def get_streams(api_key: str, media_type: str, imdb_id: str, *, season: Optional
         u = s.get("url") or s.get("file") or s.get("src")
         if not isinstance(u, str):
             continue
+        size_val = s.get("size")
+        size_bytes: Optional[int] = None
+        try:
+            if isinstance(size_val, str) and size_val.isdigit():
+                size_bytes = int(size_val)
+            elif isinstance(size_val, (int, float)):
+                size_bytes = int(size_val)
+        except Exception:
+            size_bytes = None
         out.append(
             TorboxStream(
                 name=s.get("name"),
@@ -83,6 +96,24 @@ def get_streams(api_key: str, media_type: str, imdb_id: str, *, season: Optional
                 description=s.get("description"),
                 url=u,
                 behaviorHints=s.get("behaviorHints") or {},
+                size_bytes=size_bytes,
             )
         )
     return out
+
+
+def _fmt_size(n: int) -> str:
+    try:
+        # Use binary units for familiarity
+        step = 1024.0
+        units = ["B", "KB", "MB", "GB", "TB"]
+        size = float(n)
+        for u in units:
+            if size < step or u == units[-1]:
+                if u == "B":
+                    return f"{int(size)} {u}"
+                return f"{size:.1f} {u}"
+            size /= step
+    except Exception:
+        pass
+    return f"{n} B"
