@@ -165,7 +165,7 @@ def _record_download(hist: History, *, media_id: int, media_type: str, title: st
     )
 
 
-def _pick_action(*, torbox_enabled: bool) -> Optional[str]:
+def _pick_action(*, torbox_enabled: bool, tv_episode: Optional[tuple[int, int]] = None) -> Optional[str]:
     options = [
         "Play with VidSrc",
         "Play with Torrentio",
@@ -176,6 +176,12 @@ def _pick_action(*, torbox_enabled: bool) -> Optional[str]:
         options = [
             "Play with TorBox",
             "Download with TorBox",
+        ] + options
+    # Add next/prev only for TV episode context
+    if tv_episode is not None:
+        options = [
+            "Next Episode",
+            "Previous Episode",
         ] + options
     options.append("Skip")
     sel = pick_from_strings(options, header="Action")
@@ -188,9 +194,52 @@ def _pick_action(*, torbox_enabled: bool) -> Optional[str]:
         "Download with Torrentio": "download_torrentio",
         "Play with TorBox": "play_torbox",
         "Download with TorBox": "download_torbox",
+        "Next Episode": "next_episode",
+        "Previous Episode": "prev_episode",
         "Skip": "skip",
     }
     return mapping.get(sel)
+
+
+def _next_episode_payload(tmdb: TMDBClient, tmdb_id: int, season: int, episode: int) -> Optional[dict]:
+    try:
+        sdata = tmdb.tv_season(tmdb_id, season)
+        eps = sdata.get("episodes", [])
+        if episode < len(eps):
+            return {"season": season, "episode": episode + 1}
+        # move to next season with episodes
+        details = tmdb.tv_details(tmdb_id)
+        seasons = [s for s in details.get("seasons", []) if s.get("season_number", 0) > 0 and s.get("episode_count", 0) > 0]
+        next_season = None
+        for s in seasons:
+            if s.get("season_number") > season:
+                next_season = s
+                break
+        if next_season:
+            return {"season": int(next_season.get("season_number")), "episode": 1}
+    except Exception:
+        pass
+    return None
+
+
+def _prev_episode_payload(tmdb: TMDBClient, tmdb_id: int, season: int, episode: int) -> Optional[dict]:
+    try:
+        if episode > 1:
+            return {"season": season, "episode": episode - 1}
+        # go to previous season's last episode
+        details = tmdb.tv_details(tmdb_id)
+        seasons = sorted([s for s in details.get("seasons", []) if s.get("season_number", 0) > 0 and s.get("episode_count", 0) > 0], key=lambda s: s.get("season_number"))
+        prev_season = None
+        for s in seasons:
+            if s.get("season_number") < season:
+                prev_season = s
+        if prev_season:
+            sn = int(prev_season.get("season_number"))
+            count = int(prev_season.get("episode_count") or 1)
+            return {"season": sn, "episode": count}
+    except Exception:
+        pass
+    return None
 
 
 def _prompt_directory() -> Optional[str]:
@@ -477,23 +526,47 @@ def cmd_dashboard(no_preview: bool = False) -> int:
         if media_type_val == MediaType.tv.value and sel.get("season") and sel.get("episode"):
             ep_payload = {"season": int(sel.get("season")), "episode": int(sel.get("episode"))}
         method = sel.get("last_method")
-        action = _pick_action(torbox_enabled=bool(getattr(cfg, "torbox_api_key", "")))
-        if not action or action == "skip":
-            print("Skipped.")
+        tv_tuple = None
+        if media_type_val == MediaType.tv.value and ep_payload:
+            tv_tuple = (int(ep_payload.get("season")), int(ep_payload.get("episode")))
+        # Generic loop for next/previous that re-prompts full action set
+        while True:
+            tv_tuple = None
+            if media_type_val == MediaType.tv.value and ep_payload:
+                tv_tuple = (int(ep_payload.get("season")), int(ep_payload.get("episode")))
+            action = _pick_action(torbox_enabled=bool(getattr(cfg, "torbox_api_key", "")), tv_episode=tv_tuple)
+            if not action or action == "skip":
+                print("Skipped.")
+                return 0
+            if action == "next_episode" and tv_tuple:
+                np = _next_episode_payload(tmdb, tmdb_id, tv_tuple[0], tv_tuple[1])
+                if not np:
+                    print("No next episode found.")
+                    return 0
+                ep_payload = np
+                continue
+            if action == "prev_episode" and tv_tuple:
+                pp = _prev_episode_payload(tmdb, tmdb_id, tv_tuple[0], tv_tuple[1])
+                if not pp:
+                    print("No previous episode found.")
+                    return 0
+                ep_payload = pp
+                continue
+            if action == "play_vidsrc":
+                return _play_with_vidsrc(cfg, hist, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
+            if action == "play_torrentio":
+                return _play_with_torrentio(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
+            if action == "play_torbox":
+                return _play_with_torbox(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
+            if action == "download_vidsrc":
+                return _download_with_vidsrc(cfg, hist, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
+            if action == "download_torrentio":
+                return _download_with_torrentio(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
+            if action == "download_torbox":
+                return _download_with_torbox(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
+            # Unknown action fallback
+            print("Unknown action.")
             return 0
-        if action == "play_vidsrc":
-            return _play_with_vidsrc(cfg, hist, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
-        if action == "play_torrentio":
-            return _play_with_torrentio(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
-        if action == "play_torbox":
-            return _play_with_torbox(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
-        if action == "download_vidsrc":
-            return _download_with_vidsrc(cfg, hist, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
-        if action == "download_torrentio":
-            return _download_with_torrentio(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
-        if action == "download_torbox":
-            return _download_with_torbox(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
-        return 0
 
     elif choice == "Popular Movies":
         items = tmdb.movie_popular(page=1)
@@ -509,7 +582,8 @@ def cmd_dashboard(no_preview: bool = False) -> int:
             if it.get("media_type") == MediaType.movie.value and int(it.get("id")) == int(selected.id) and it.get("last_method"):
                 last_method = it.get("last_method")
                 break
-        action = _pick_action(torbox_enabled=bool(getattr(cfg, "torbox_api_key", "")))
+        tv_tuple = (episode_payload["season"], episode_payload["episode"]) if episode_payload else None
+        action = _pick_action(torbox_enabled=bool(getattr(cfg, "torbox_api_key", "")), tv_episode=tv_tuple)
         if not action or action == "skip":
             print("Skipped.")
             return 0
@@ -583,23 +657,41 @@ def cmd_dashboard(no_preview: bool = False) -> int:
             if it.get("media_type") == MediaType.tv.value and int(it.get("id")) == int(selected.id) and it.get("last_method"):
                 last_method = it.get("last_method")
                 break
-        action = _pick_action(torbox_enabled=bool(getattr(cfg, "torbox_api_key", "")))
-        if not action or action == "skip":
-            print("Skipped.")
+        # Generic loop for next/previous that re-prompts full action set
+        while True:
+            tv_tuple = (episode_payload["season"], episode_payload["episode"]) if episode_payload else None
+            action = _pick_action(torbox_enabled=bool(getattr(cfg, "torbox_api_key", "")), tv_episode=tv_tuple)
+            if not action or action == "skip":
+                print("Skipped.")
+                return 0
+            if action == "next_episode" and tv_tuple:
+                np = _next_episode_payload(tmdb, selected.id, tv_tuple[0], tv_tuple[1])
+                if not np:
+                    print("No next episode found.")
+                    return 0
+                episode_payload = np
+                continue
+            if action == "prev_episode" and tv_tuple:
+                pp = _prev_episode_payload(tmdb, selected.id, tv_tuple[0], tv_tuple[1])
+                if not pp:
+                    print("No previous episode found.")
+                    return 0
+                episode_payload = pp
+                continue
+            if action == "play_vidsrc":
+                return _play_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+            if action == "play_torrentio":
+                return _play_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+            if action == "play_torbox":
+                return _play_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+            if action == "download_vidsrc":
+                return _download_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+            if action == "download_torrentio":
+                return _download_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+            if action == "download_torbox":
+                return _download_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+            print("Unknown action.")
             return 0
-        if action == "play_vidsrc":
-            return _play_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
-        if action == "play_torrentio":
-            return _play_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
-        if action == "play_torbox":
-            return _play_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
-        if action == "download_vidsrc":
-            return _download_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
-        if action == "download_torrentio":
-            return _download_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
-        if action == "download_torbox":
-            return _download_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
-        return 0
 
 
 def cmd_torrentio(media_type: str, tmdb_id: int, season: Optional[int], episode: Optional[int], json_out: bool, first_only: bool, timeout: int) -> int:
@@ -804,49 +896,43 @@ def cmd_search(query: Optional[str], no_preview: bool = False) -> int:
                             "overview": e.get("overview"),
                         }
 
-    # Persist selection to history (with episode when present)
-    # Persist selection to history (with poster/backdrop for previews)
-    hist.add(
-        {
-            "id": selected.id,
-            "media_type": media_type_val,
-            "title": selected.title,
-            "release_year": selected.release_year,
-            "vote_average": selected.vote_average,
-            "poster_url": getattr(selected, "poster_url", None),
-            "backdrop_url": getattr(selected, "backdrop_url", None),
-            "source": "tmdb_search",
-            "episode": episode_payload,
-        }
-    )
+    # Do not persist selection yet; only record history when a concrete action is chosen
 
-    output = {
-        "id": selected.id,
-        "media_type": media_type_val,
-        "title": selected.title,
-        "episode": episode_payload,
-    }
-    print(json.dumps(output, ensure_ascii=False))
-    print("Saved to history.")
-
-    # Action selection: play or download via VidSrc/Torrentio/TorBox
-    action = _pick_action(torbox_enabled=bool(getattr(cfg, "torbox_api_key", "")))
-    if not action or action == "skip":
-        print("Skipped.")
+    # Action selection: play or download via VidSrc/Torrentio/TorBox with generic next/prev
+    while True:
+        tv_tuple = (episode_payload["season"], episode_payload["episode"]) if (media_type_val == MediaType.tv.value and episode_payload) else None
+        action = _pick_action(torbox_enabled=bool(getattr(cfg, "torbox_api_key", "")), tv_episode=tv_tuple)
+        if not action or action == "skip":
+            print("Skipped.")
+            return 0
+        if action == "next_episode" and tv_tuple:
+            np = _next_episode_payload(tmdb, selected.id, tv_tuple[0], tv_tuple[1])
+            if not np:
+                print("No next episode found.")
+                return 0
+            episode_payload = np
+            continue
+        if action == "prev_episode" and tv_tuple:
+            pp = _prev_episode_payload(tmdb, selected.id, tv_tuple[0], tv_tuple[1])
+            if not pp:
+                print("No previous episode found.")
+                return 0
+            episode_payload = pp
+            continue
+        if action == "play_vidsrc":
+            return _play_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "play_torrentio":
+            return _play_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "play_torbox":
+            return _play_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "download_vidsrc":
+            return _download_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "download_torrentio":
+            return _download_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "download_torbox":
+            return _download_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        print("Unknown action.")
         return 0
-    if action == "play_vidsrc":
-        return _play_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
-    if action == "play_torrentio":
-        return _play_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
-    if action == "play_torbox":
-        return _play_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
-    if action == "download_vidsrc":
-        return _download_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
-    if action == "download_torrentio":
-        return _download_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
-    if action == "download_torbox":
-        return _download_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
-    return 0
 
 
 def cmd_history(limit: int = 30) -> int:

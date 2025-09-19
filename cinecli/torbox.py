@@ -44,13 +44,18 @@ class TorboxStream(BaseModel):
     url: str
     behaviorHints: Dict[str, Any] = Field(default_factory=dict)
     size_bytes: Optional[int] = None
+    filename: Optional[str] = None
 
     def display(self) -> str:
         parts: List[str] = []
-        if self.name:
-            parts.append(self.name.replace("\n", " "))
-        if self.title:
-            parts.append(self.title.replace("\n", " "))
+        # Prefer torrent filename if available
+        if self.filename:
+            parts.append(self.filename.replace("\n", " ").replace("\\n", " "))
+        # Fallbacks
+        if not parts and self.name:
+            parts.append(self.name.replace("\n", " ").replace("\\n", " "))
+        if not parts and self.title:
+            parts.append(self.title.replace("\n", " ").replace("\\n", " "))
         if not parts:
             parts.append(self.url.split("/", 3)[-1][:40])
         label = " | ".join(parts)
@@ -89,6 +94,24 @@ def get_streams(api_key: str, media_type: str, imdb_id: str, *, season: Optional
                 size_bytes = int(size_val)
         except Exception:
             size_bytes = None
+        # Derive filename from behaviorHints or description
+        fname = None
+        try:
+            bh = s.get("behaviorHints") or {}
+            if isinstance(bh, dict) and isinstance(bh.get("filename"), str):
+                fname = bh.get("filename")
+            if not fname and isinstance(s.get("description"), str):
+                desc = s.get("description")
+                # crude extract: look for 'filename:' token
+                lower = desc.lower()
+                if "filename:" in lower:
+                    i = lower.index("filename:") + len("filename:")
+                    chunk = desc[i:].split("\n", 1)[0].split("\\n", 1)[0].strip()
+                    if chunk:
+                        fname = chunk
+        except Exception:
+            fname = None
+
         out.append(
             TorboxStream(
                 name=s.get("name"),
@@ -97,6 +120,7 @@ def get_streams(api_key: str, media_type: str, imdb_id: str, *, season: Optional
                 url=u,
                 behaviorHints=s.get("behaviorHints") or {},
                 size_bytes=size_bytes,
+                filename=fname,
             )
         )
     return out
