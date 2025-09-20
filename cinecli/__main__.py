@@ -26,12 +26,31 @@ from .torbox import (
     get_streams as torbox_get_streams,
     TorboxStream,
 )
+from urllib.parse import urlsplit, urlunsplit, quote
 
 
 def cmd_setup() -> int:
     cfg = ConfigManager()
     cfg.interactive_setup()
     return 0
+
+
+def _sanitize_url(u: str) -> str:
+    """Percent-encode spaces and other unsafe characters in URLs for players like VLC.
+
+    Leaves already-encoded sequences intact. Encodes path and query separately.
+    """
+    try:
+        sp = urlsplit(u)
+        # Safe chars include RFC3986 unreserved + common sub-delims and path separators
+        safe_path = "/:@!$&'()*+,;=-._~%"
+        path = quote(sp.path, safe=safe_path)
+        # For query, keep separators like &= and commas/semicolons
+        safe_query = "=&,:@!$'()*+;/-._~%"
+        query = quote(sp.query, safe=safe_query)
+        return urlunsplit((sp.scheme, sp.netloc, path, query, sp.fragment))
+    except Exception:
+        return u
 
 
 def _download_with_vidsrc(cfg: ConfigManager, hist: History, *, tmdb_id: int, media_type_val: str, episode_payload: Optional[dict], title: str, poster_url: Optional[str], backdrop_url: Optional[str]) -> int:
@@ -402,9 +421,10 @@ def _play_with_torbox(cfg: ConfigManager, hist: History, tmdb: TMDBClient, *, tm
         print("No supported player (mpv/vlc) found on PATH.")
         print(f"URL: {chosen.url}")
         return 0
-    print(f"Launching {player} -> {chosen.url}")
+    safe_url = _sanitize_url(chosen.url)
+    print(f"Launching {player} -> {safe_url}")
     try:
-        subprocess.Popen([player, chosen.url])
+        subprocess.Popen([player, safe_url])
         _record_play(hist, media_id=tmdb_id, media_type=media_type_val, title=title, episode_payload=episode_payload, poster_url=poster_url, backdrop_url=backdrop_url, method="torbox")
     except Exception as e:
         print(f"Failed to launch {player}: {e}")
@@ -463,7 +483,8 @@ def _download_with_torbox(cfg: ConfigManager, hist: History, tmdb: TMDBClient, *
         print("No directory provided.")
         return 0
     output_tpl = os.path.join(out_dir, "%(title)s.%(ext)s")
-    cmd = [ytdlp, chosen.url, "-o", output_tpl]
+    safe_url = _sanitize_url(chosen.url)
+    cmd = [ytdlp, safe_url, "-o", output_tpl]
     print(f"Downloading with yt-dlp -> {output_tpl}")
     try:
         subprocess.Popen(cmd)
