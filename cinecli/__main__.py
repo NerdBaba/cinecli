@@ -150,7 +150,13 @@ def _download_with_torrentio(cfg: ConfigManager, hist: History, tmdb: TMDBClient
     return 0
 
 def _choose_player(cfg: ConfigManager) -> Optional[str]:
-    return cfg.player if shutil.which(cfg.player) else ("mpv" if shutil.which("mpv") else ("vlc" if shutil.which("vlc") else None))
+    if shutil.which(cfg.player):
+        return cfg.player
+    # Fallback order: mpv, vlc, clapper
+    for cand in ("mpv", "vlc", "clapper"):
+        if shutil.which(cand):
+            return cand
+    return None
 
 
 def _record_play(hist: History, *, media_id: int, media_type: str, title: str, episode_payload: Optional[dict], poster_url: Optional[str], backdrop_url: Optional[str], method: str) -> None:
@@ -778,7 +784,7 @@ def cmd_torrentio(media_type: str, tmdb_id: int, season: Optional[int], episode:
     chosen: TorrentioStream = streams[idx]
     dn = chosen.behaviorHints.get("filename") or chosen.title
     magnet = torrentio_build_magnet(chosen.infoHash, display_name=dn, sources=chosen.sources)
-    player = cfg.player if shutil.which(cfg.player) else ("mpv" if shutil.which("mpv") else ("vlc" if shutil.which("vlc") else None))
+    player = _choose_player(cfg)
     if not player:
         print("No supported player (mpv/vlc) found on PATH.")
         print(f"Magnet: {magnet}")

@@ -17,7 +17,7 @@ CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "ci
 
 class Settings(BaseModel):
     tmdb_api_key: str = Field(..., min_length=10)
-    player: str = Field("mpv", pattern=r"^(mpv|vlc)$")
+    player: str = Field("mpv", pattern=r"^(mpv|vlc|clapper)$")
     image_preview: bool = True
     history_path: str = str(DATA_DIR / "history.jsonl")
     webtorrent_tmp_dir: str = str(CACHE_DIR / "webtorrent")
@@ -59,8 +59,8 @@ class ConfigManager:
                 break
             print("Invalid key, try again.")
         player = "mpv"
-        pref = input("Preferred player (mpv/vlc) [mpv]: ").strip().lower()
-        if pref in {"mpv", "vlc"}:
+        pref = input("Preferred player (mpv/vlc/clapper) [mpv]: ").strip().lower()
+        if pref in {"mpv", "vlc", "clapper"}:
             player = pref
         has_chafa = which("chafa") is not None
         image_preview = has_chafa
