@@ -1164,7 +1164,7 @@ def cmd_search(query: Optional[str], no_preview: bool = False) -> int:
 
     # Do not persist selection yet; only record history when a concrete action is chosen
 
-    # Action selection: play or download via VidSrc/Torrentio/TorBox with generic next/prev
+    # Action selection: play or download via VidSrc/Torrentio/TorBox and extra providers with generic next/prev
     while True:
         tv_tuple = (episode_payload["season"], episode_payload["episode"]) if (media_type_val == MediaType.tv.value and episode_payload) else None
         action = _pick_action(torbox_enabled=bool(getattr(cfg, "torbox_api_key", "")), tv_episode=tv_tuple)
@@ -1191,12 +1191,24 @@ def cmd_search(query: Optional[str], no_preview: bool = False) -> int:
             return _play_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
         if action == "play_torbox":
             return _play_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "play_tio_tb":
+            return _play_with_tio_tb(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "play_streamthru":
+            return _play_with_manifest(cfg, hist, tmdb, manifest_url=getattr(cfg, "streamthru_manifest_url", ""), tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None), method="streamthru")
+        if action == "play_comet":
+            return _play_with_manifest(cfg, hist, tmdb, manifest_url=getattr(cfg, "comet_manifest_url", ""), tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None), method="comet")
         if action == "download_vidsrc":
             return _download_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
         if action == "download_torrentio":
             return _download_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
         if action == "download_torbox":
             return _download_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "download_tio_tb":
+            return _download_with_tio_tb(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "download_streamthru":
+            return _download_with_manifest(cfg, hist, tmdb, manifest_url=getattr(cfg, "streamthru_manifest_url", ""), tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None), method="streamthru")
+        if action == "download_comet":
+            return _download_with_manifest(cfg, hist, tmdb, manifest_url=getattr(cfg, "comet_manifest_url", ""), tmdb_id=selected.id, media_type_val=media_type_val, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None), method="comet")
         print("Unknown action.")
         return 0
 
