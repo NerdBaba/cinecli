@@ -23,6 +23,9 @@ class Settings(BaseModel):
     webtorrent_tmp_dir: str = str(CACHE_DIR / "webtorrent")
     # Optional TorBox API key; if empty, TorBox features are hidden
     torbox_api_key: str = ""
+    # Optional: Streamthru and Comet manifest base URLs (must end with /manifest.json)
+    streamthru_manifest_url: str = ""
+    comet_manifest_url: str = ""
 
 
 class ConfigManager:
@@ -78,12 +81,18 @@ class ConfigManager:
             Path(webtorrent_tmp_dir).mkdir(parents=True, exist_ok=True)
         except Exception:
             print(f"Warning: could not create directory: {webtorrent_tmp_dir}")
+        # Optional providers gated behind TorBox key
+        torbox_api_key = input("TorBox API key (optional, press Enter to skip): ").strip()
+        streamthru_manifest_url = input("Streamthru manifest URL (optional, press Enter to skip): ").strip()
+        comet_manifest_url = input("Comet manifest URL (optional, press Enter to skip): ").strip()
         settings = Settings(
             tmdb_api_key=api_key,
             player=player,
             image_preview=image_preview,
             webtorrent_tmp_dir=webtorrent_tmp_dir,
-            torbox_api_key=input("TorBox API key (optional, press Enter to skip): ").strip(),
+            torbox_api_key=torbox_api_key,
+            streamthru_manifest_url=streamthru_manifest_url,
+            comet_manifest_url=comet_manifest_url,
         )
         self.save(settings)
         print(f"Saved config to {self.path}")

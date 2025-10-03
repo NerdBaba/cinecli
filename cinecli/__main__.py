@@ -26,6 +26,11 @@ from .torbox import (
     get_streams as torbox_get_streams,
     TorboxStream,
 )
+from .providers_extra import (
+    get_torrentio_tb_streams,
+    get_manifest_streams,
+    DirectStream,
+)
 from urllib.parse import urlsplit, urlunsplit, quote
 
 
@@ -33,6 +38,192 @@ def cmd_setup() -> int:
     cfg = ConfigManager()
     cfg.interactive_setup()
     return 0
+
+
+def _select_and_play_direct(cfg: ConfigManager, hist: History, *, streams: list[DirectStream], tmdb_id: int, media_type_val: str, episode_payload: Optional[dict], title: str, poster_url: Optional[str], backdrop_url: Optional[str], method: str) -> int:
+    if not streams:
+        print(f"No {method} streams found.")
+        return 0
+    labels = [s.display() for s in streams]
+    pick = pick_from_strings(labels, header=f"{method} Stream")
+    if not pick:
+        print("Nothing selected.")
+        return 0
+    try:
+        idx = labels.index(pick)
+    except ValueError:
+        idx = 0
+    chosen = streams[idx]
+    player = _choose_player(cfg)
+    if not player:
+        print("No supported player (mpv/vlc) found on PATH.")
+        print(f"URL: {chosen.url}")
+        return 0
+    safe_url = _sanitize_url(chosen.url)
+    print(f"Launching {player} -> {safe_url}")
+    try:
+        subprocess.Popen([player, safe_url])
+        _record_play(hist, media_id=tmdb_id, media_type=media_type_val, title=title, episode_payload=episode_payload, poster_url=poster_url, backdrop_url=backdrop_url, method=method)
+    except Exception as e:
+        print(f"Failed to launch {player}: {e}")
+    return 0
+
+
+def _select_and_download_direct(cfg: ConfigManager, hist: History, *, streams: list[DirectStream], tmdb_id: int, media_type_val: str, episode_payload: Optional[dict], title: str, poster_url: Optional[str], backdrop_url: Optional[str], method: str) -> int:
+    if not streams:
+        print(f"No {method} streams found.")
+        return 0
+    labels = [s.display() for s in streams]
+    pick = pick_from_strings(labels, header=f"{method} Stream")
+    if not pick:
+        print("Nothing selected.")
+        return 0
+    try:
+        idx = labels.index(pick)
+    except ValueError:
+        idx = 0
+    chosen = streams[idx]
+    ytdlp = shutil.which("yt-dlp")
+    if not ytdlp:
+        print("yt-dlp not found on PATH. Install it to enable downloads.")
+        print(f"URL: {chosen.url}")
+        return 0
+    out_dir = _prompt_directory()
+    if not out_dir:
+        print("No directory provided.")
+        return 0
+    output_tpl = os.path.join(out_dir, "%(title)s.%(ext)s")
+    safe_url = _sanitize_url(chosen.url)
+    cmd = [ytdlp, safe_url, "-o", output_tpl]
+    print(f"Downloading with yt-dlp -> {output_tpl}")
+    try:
+        subprocess.Popen(cmd)
+        _record_download(hist, media_id=tmdb_id, media_type=media_type_val, title=title, episode_payload=episode_payload, poster_url=poster_url, backdrop_url=backdrop_url, method=method, out_dir=out_dir)
+    except Exception as e:
+        print(f"Failed to launch yt-dlp: {e}")
+    return 0
+
+
+def _play_with_tio_tb(cfg: ConfigManager, hist: History, tmdb: TMDBClient, *, tmdb_id: int, media_type_val: str, episode_payload: Optional[dict], title: str, poster_url: Optional[str], backdrop_url: Optional[str]) -> int:
+    api_key = getattr(cfg, "torbox_api_key", "") or ""
+    if not api_key:
+        print("TorBox API key not configured. Run 'cinecli setup' to add it.")
+        return 0
+    imdb_id = None
+    try:
+        if media_type_val == MediaType.movie.value:
+            imdb_id = tmdb.movie_external_ids(tmdb_id).get("imdb_id")
+        else:
+            imdb_id = tmdb.tv_external_ids(tmdb_id).get("imdb_id")
+    except Exception as e:
+        print(f"Failed to fetch external IDs: {e}")
+        return 0
+    if not imdb_id:
+        print("No IMDb ID found for item.")
+        return 0
+    try:
+        if media_type_val == MediaType.movie.value:
+            streams = get_torrentio_tb_streams(api_key, "movie", imdb_id, timeout=12)
+        else:
+            if not episode_payload:
+                print("No episode selected; cannot resolve TV streams.")
+                return 0
+            streams = get_torrentio_tb_streams(api_key, "tv", imdb_id, season=episode_payload.get("season"), episode=episode_payload.get("episode"), timeout=12)
+    except Exception as e:
+        print(f"Failed to fetch Torrentio TB streams: {e}")
+        return 0
+    return _select_and_play_direct(cfg, hist, streams=streams, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=episode_payload, title=title, poster_url=poster_url, backdrop_url=backdrop_url, method="torrentio_tb")
+
+
+def _download_with_tio_tb(cfg: ConfigManager, hist: History, tmdb: TMDBClient, *, tmdb_id: int, media_type_val: str, episode_payload: Optional[dict], title: str, poster_url: Optional[str], backdrop_url: Optional[str]) -> int:
+    api_key = getattr(cfg, "torbox_api_key", "") or ""
+    if not api_key:
+        print("TorBox API key not configured. Run 'cinecli setup' to add it.")
+        return 0
+    imdb_id = None
+    try:
+        if media_type_val == MediaType.movie.value:
+            imdb_id = tmdb.movie_external_ids(tmdb_id).get("imdb_id")
+        else:
+            imdb_id = tmdb.tv_external_ids(tmdb_id).get("imdb_id")
+    except Exception as e:
+        print(f"Failed to fetch external IDs: {e}")
+        return 0
+    if not imdb_id:
+        print("No IMDb ID found for item.")
+        return 0
+    try:
+        if media_type_val == MediaType.movie.value:
+            streams = get_torrentio_tb_streams(api_key, "movie", imdb_id, timeout=12)
+        else:
+            if not episode_payload:
+                print("No episode selected; cannot resolve TV streams.")
+                return 0
+            streams = get_torrentio_tb_streams(api_key, "tv", imdb_id, season=episode_payload.get("season"), episode=episode_payload.get("episode"), timeout=12)
+    except Exception as e:
+        print(f"Failed to fetch Torrentio TB streams: {e}")
+        return 0
+    return _select_and_download_direct(cfg, hist, streams=streams, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=episode_payload, title=title, poster_url=poster_url, backdrop_url=backdrop_url, method="torrentio_tb")
+
+
+def _play_with_manifest(cfg: ConfigManager, hist: History, tmdb: TMDBClient, *, manifest_url: str, tmdb_id: int, media_type_val: str, episode_payload: Optional[dict], title: str, poster_url: Optional[str], backdrop_url: Optional[str], method: str) -> int:
+    if not manifest_url:
+        print(f"{method} manifest URL not configured. Run 'cinecli setup' to add it.")
+        return 0
+    imdb_id = None
+    try:
+        if media_type_val == MediaType.movie.value:
+            imdb_id = tmdb.movie_external_ids(tmdb_id).get("imdb_id")
+        else:
+            imdb_id = tmdb.tv_external_ids(tmdb_id).get("imdb_id")
+    except Exception as e:
+        print(f"Failed to fetch external IDs: {e}")
+        return 0
+    if not imdb_id:
+        print("No IMDb ID found for item.")
+        return 0
+    try:
+        if media_type_val == MediaType.movie.value:
+            streams = get_manifest_streams(manifest_url, "movie", imdb_id, timeout=12)
+        else:
+            if not episode_payload:
+                print("No episode selected; cannot resolve TV streams.")
+                return 0
+            streams = get_manifest_streams(manifest_url, "tv", imdb_id, season=episode_payload.get("season"), episode=episode_payload.get("episode"), timeout=12)
+    except Exception as e:
+        print(f"Failed to fetch {method} streams: {e}")
+        return 0
+    return _select_and_play_direct(cfg, hist, streams=streams, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=episode_payload, title=title, poster_url=poster_url, backdrop_url=backdrop_url, method=method)
+
+
+def _download_with_manifest(cfg: ConfigManager, hist: History, tmdb: TMDBClient, *, manifest_url: str, tmdb_id: int, media_type_val: str, episode_payload: Optional[dict], title: str, poster_url: Optional[str], backdrop_url: Optional[str], method: str) -> int:
+    if not manifest_url:
+        print(f"{method} manifest URL not configured. Run 'cinecli setup' to add it.")
+        return 0
+    imdb_id = None
+    try:
+        if media_type_val == MediaType.movie.value:
+            imdb_id = tmdb.movie_external_ids(tmdb_id).get("imdb_id")
+        else:
+            imdb_id = tmdb.tv_external_ids(tmdb_id).get("imdb_id")
+    except Exception as e:
+        print(f"Failed to fetch external IDs: {e}")
+        return 0
+    if not imdb_id:
+        print("No IMDb ID found for item.")
+        return 0
+    try:
+        if media_type_val == MediaType.movie.value:
+            streams = get_manifest_streams(manifest_url, "movie", imdb_id, timeout=12)
+        else:
+            if not episode_payload:
+                print("No episode selected; cannot resolve TV streams.")
+                return 0
+            streams = get_manifest_streams(manifest_url, "tv", imdb_id, season=episode_payload.get("season"), episode=episode_payload.get("episode"), timeout=12)
+    except Exception as e:
+        print(f"Failed to fetch {method} streams: {e}")
+        return 0
+    return _select_and_download_direct(cfg, hist, streams=streams, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=episode_payload, title=title, poster_url=poster_url, backdrop_url=backdrop_url, method=method)
 
 
 def _sanitize_url(u: str) -> str:
@@ -201,6 +392,12 @@ def _pick_action(*, torbox_enabled: bool, tv_episode: Optional[tuple[int, int]] 
         options = [
             "Play with TorBox",
             "Download with TorBox",
+            "Play with Torrentio TB",
+            "Download with Torrentio TB",
+            "Play with Streamthru",
+            "Download with Streamthru",
+            "Play with Comet",
+            "Download with Comet",
         ] + options
     # Add next/prev only for TV episode context
     if tv_episode is not None:
@@ -219,6 +416,12 @@ def _pick_action(*, torbox_enabled: bool, tv_episode: Optional[tuple[int, int]] 
         "Download with Torrentio": "download_torrentio",
         "Play with TorBox": "play_torbox",
         "Download with TorBox": "download_torbox",
+        "Play with Torrentio TB": "play_tio_tb",
+        "Download with Torrentio TB": "download_tio_tb",
+        "Play with Streamthru": "play_streamthru",
+        "Download with Streamthru": "download_streamthru",
+        "Play with Comet": "play_comet",
+        "Download with Comet": "download_comet",
         "Next Episode": "next_episode",
         "Previous Episode": "prev_episode",
         "Skip": "skip",
@@ -585,12 +788,24 @@ def cmd_dashboard(no_preview: bool = False) -> int:
                 return _play_with_torrentio(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
             if action == "play_torbox":
                 return _play_with_torbox(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
+            if action == "play_tio_tb":
+                return _play_with_tio_tb(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
+            if action == "play_streamthru":
+                return _play_with_manifest(cfg, hist, tmdb, manifest_url=getattr(cfg, "streamthru_manifest_url", ""), tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"), method="streamthru")
+            if action == "play_comet":
+                return _play_with_manifest(cfg, hist, tmdb, manifest_url=getattr(cfg, "comet_manifest_url", ""), tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"), method="comet")
             if action == "download_vidsrc":
                 return _download_with_vidsrc(cfg, hist, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
             if action == "download_torrentio":
                 return _download_with_torrentio(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
             if action == "download_torbox":
                 return _download_with_torbox(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
+            if action == "download_tio_tb":
+                return _download_with_tio_tb(cfg, hist, tmdb, tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"))
+            if action == "download_streamthru":
+                return _download_with_manifest(cfg, hist, tmdb, manifest_url=getattr(cfg, "streamthru_manifest_url", ""), tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"), method="streamthru")
+            if action == "download_comet":
+                return _download_with_manifest(cfg, hist, tmdb, manifest_url=getattr(cfg, "comet_manifest_url", ""), tmdb_id=tmdb_id, media_type_val=media_type_val, episode_payload=ep_payload, title=title, poster_url=sel.get("poster_url"), backdrop_url=sel.get("backdrop_url"), method="comet")
             # Unknown action fallback
             print("Unknown action.")
             return 0
@@ -609,7 +824,7 @@ def cmd_dashboard(no_preview: bool = False) -> int:
             if it.get("media_type") == MediaType.movie.value and int(it.get("id")) == int(selected.id) and it.get("last_method"):
                 last_method = it.get("last_method")
                 break
-        tv_tuple = (episode_payload["season"], episode_payload["episode"]) if episode_payload else None
+        tv_tuple = None
         action = _pick_action(torbox_enabled=bool(getattr(cfg, "torbox_api_key", "")), tv_episode=tv_tuple)
         if not action or action == "skip":
             print("Skipped.")
@@ -620,12 +835,24 @@ def cmd_dashboard(no_preview: bool = False) -> int:
             return _play_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
         if action == "play_torbox":
             return _play_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "play_tio_tb":
+            return _play_with_tio_tb(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "play_streamthru":
+            return _play_with_manifest(cfg, hist, tmdb, manifest_url=getattr(cfg, "streamthru_manifest_url", ""), tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None), method="streamthru")
+        if action == "play_comet":
+            return _play_with_manifest(cfg, hist, tmdb, manifest_url=getattr(cfg, "comet_manifest_url", ""), tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None), method="comet")
         if action == "download_vidsrc":
             return _download_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
         if action == "download_torrentio":
             return _download_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
         if action == "download_torbox":
             return _download_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "download_tio_tb":
+            return _download_with_tio_tb(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+        if action == "download_streamthru":
+            return _download_with_manifest(cfg, hist, tmdb, manifest_url=getattr(cfg, "streamthru_manifest_url", ""), tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None), method="streamthru")
+        if action == "download_comet":
+            return _download_with_manifest(cfg, hist, tmdb, manifest_url=getattr(cfg, "comet_manifest_url", ""), tmdb_id=selected.id, media_type_val=MediaType.movie.value, episode_payload=None, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None), method="comet")
         return 0
 
     elif choice == "Search":
@@ -711,12 +938,24 @@ def cmd_dashboard(no_preview: bool = False) -> int:
                 return _play_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
             if action == "play_torbox":
                 return _play_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+            if action == "play_tio_tb":
+                return _play_with_tio_tb(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+            if action == "play_streamthru":
+                return _play_with_manifest(cfg, hist, tmdb, manifest_url=getattr(cfg, "streamthru_manifest_url", ""), tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None), method="streamthru")
+            if action == "play_comet":
+                return _play_with_manifest(cfg, hist, tmdb, manifest_url=getattr(cfg, "comet_manifest_url", ""), tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None), method="comet")
             if action == "download_vidsrc":
                 return _download_with_vidsrc(cfg, hist, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
             if action == "download_torrentio":
                 return _download_with_torrentio(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
             if action == "download_torbox":
                 return _download_with_torbox(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+            if action == "download_tio_tb":
+                return _download_with_tio_tb(cfg, hist, tmdb, tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None))
+            if action == "download_streamthru":
+                return _download_with_manifest(cfg, hist, tmdb, manifest_url=getattr(cfg, "streamthru_manifest_url", ""), tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None), method="streamthru")
+            if action == "download_comet":
+                return _download_with_manifest(cfg, hist, tmdb, manifest_url=getattr(cfg, "comet_manifest_url", ""), tmdb_id=selected.id, media_type_val=MediaType.tv.value, episode_payload=episode_payload, title=selected.title, poster_url=getattr(selected, "poster_url", None), backdrop_url=getattr(selected, "backdrop_url", None), method="comet")
             print("Unknown action.")
             return 0
 
